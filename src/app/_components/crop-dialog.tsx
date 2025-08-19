@@ -1,14 +1,7 @@
 "use client";
 import React, { useState, useCallback, ChangeEvent, useEffect } from "react";
 import Cropper from "react-easy-crop";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 
 const MAX_PIXEL = 4000;
 
@@ -259,7 +252,16 @@ const CropDialog: React.FC<CropDialogProps> = ({
 
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-6xl max-h-[90vh]">
+      <DialogContent
+        className="max-w-6xl max-h-[90vh] overflow-y-auto
+  [&::-webkit-scrollbar]:w-2
+  [&::-webkit-scrollbar-track]:rounded-full
+  [&::-webkit-scrollbar-track]:bg-gray-100
+  [&::-webkit-scrollbar-thumb]:rounded-full
+  [&::-webkit-scrollbar-thumb]:bg-gray-300
+  dark:[&::-webkit-scrollbar-track]:bg-neutral-700
+  dark:[&::-webkit-scrollbar-thumb]:bg-neutral-500"
+      >
         <DialogTitle>Image Crop Tool</DialogTitle>
         <p className="text-xs text-gray-500 mt-1">
           {`* ${MAX_PIXEL}px 이상의 이미지는 자동으로 3000px 이하로 리사이징됩니다.`}
