@@ -171,6 +171,7 @@ const ImageCropComponent: React.FC = () => {
           aspect={aspect}
           rotation={rotation}
           onClear={handleClearResult}
+          openCropper={() => setIsCropperOpen(true)}
         />
       )}
     </div>
