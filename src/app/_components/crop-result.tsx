@@ -2,9 +2,6 @@
 
 interface CroppedResultProps {
   croppedImage: string;
-  croppedAreaPixels: CroppedAreaPixels | null;
-  aspect: number;
-  rotation: number;
   onClear: () => void;
   openCropper: () => void;
 }

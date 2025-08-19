@@ -1,178 +1,260 @@
 "use client";
-import React, { useState, useCallback, ChangeEvent, useRef } from "react";
 import { toast } from "sonner";
+import React, { useState, useCallback, ChangeEvent, useEffect } from "react";
 import CropDialog from "./crop-dialog";
-import CroppedResult from "./crop-result";
+import ImageSummary from "./image-summary";
+import ImageThumbnail from "./image-thumbnail";
+import {
+  calculateAspectRatio,
+  isValidAspectRatio,
+  resizeImage,
+} from "@/lib/utils";
 
-const MAX_PIXEL = 4000;
 const ImageCropComponent: React.FC = () => {
-  const imageRef = useRef<HTMLInputElement | null>(null);
+  const [images, setImages] = useState<ImageItem[]>([]);
   const [isCropperOpen, setIsCropperOpen] = useState(false);
-  const [imageSrc, setImageSrc] = useState<string>("/api/placeholder/400/300");
-  const [croppedImage, setCroppedImage] = useState<string | null>(null);
-  const [croppedAreaPixels, setCroppedAreaPixels] =
-    useState<CroppedAreaPixels | null>(null);
-  const [aspect, setAspect] = useState<number>(1);
-  const [rotation, setRotation] = useState<number>(0);
+  const [currentCropImage, setCurrentCropImage] = useState<ImageItem | null>(
+    null
+  );
 
-  // 이미지 리사이징 함수
-  const resizeImage = useCallback(
-    (file: File, maxWidth = 3000): Promise<string> => {
-      return new Promise((resolve, reject) => {
+  // 이미지 메타데이터 추출 함수
+  const extractImageMetadata = useCallback(
+    (
+      file: File
+    ): Promise<{ aspectRatio: number; width: number; height: number }> => {
+      return new Promise((resolve) => {
         const image = new Image();
-
         image.onload = () => {
-          const canvas = document.createElement("canvas");
-          const ctx = canvas.getContext("2d");
-
-          if (!ctx) {
-            reject(new Error("Canvas context not supported"));
-            return;
-          }
-
-          const originalWidth = image.width;
-          const originalHeight = image.height;
-          const needsResize =
-            originalWidth > MAX_PIXEL || originalHeight > MAX_PIXEL;
-
-          if (!needsResize) {
-            const reader = new FileReader();
-            reader.onload = () => {
-              if (typeof reader.result === "string") {
-                resolve(reader.result);
-              } else {
-                reject(new Error("Failed to read file"));
-              }
-            };
-            reader.readAsDataURL(file);
-            return;
-          }
-
-          let newWidth = originalWidth;
-          let newHeight = originalHeight;
-
-          if (originalWidth > maxWidth) {
-            newWidth = maxWidth;
-            newHeight = (originalHeight * maxWidth) / originalWidth;
-          }
-
-          if (newHeight > maxWidth) {
-            newHeight = maxWidth;
-            newWidth = (originalWidth * maxWidth) / originalHeight;
-          }
-
-          canvas.width = newWidth;
-          canvas.height = newHeight;
-          ctx.imageSmoothingEnabled = true;
-          ctx.imageSmoothingQuality = "high";
-          ctx.drawImage(image, 0, 0, newWidth, newHeight);
-
-          canvas.toBlob(
-            (blob) => {
-              if (blob) {
-                const url = URL.createObjectURL(blob);
-                toast.info(
-                  `Image resized: ${originalWidth}x${originalHeight} → ${Math.round(
-                    newWidth
-                  )}x${Math.round(newHeight)}`
-                );
-                resolve(url);
-              } else {
-                reject(new Error("Failed to create blob"));
-              }
-            },
-            "image/jpeg",
-            0.9
-          );
+          const aspectRatio = calculateAspectRatio(image.width, image.height);
+          resolve({
+            aspectRatio,
+            width: image.width,
+            height: image.height,
+          });
         };
-
-        image.onerror = () => {
-          reject(new Error("Failed to load image"));
-        };
-
-        const reader = new FileReader();
-        reader.onload = (e) => {
-          if (typeof e.target?.result === "string") {
-            image.src = e.target.result;
-          }
-        };
-        reader.readAsDataURL(file);
+        image.src = URL.createObjectURL(file);
       });
     },
     []
   );
 
-  const handleFileUpload = async (
+  // 다중 파일 업로드 처리
+  const handleFilesUpload = async (
     event: ChangeEvent<HTMLInputElement>
   ): Promise<void> => {
-    const file = event.target.files?.[0];
-    if (!file) return;
+    const files = Array.from(event.target.files || []);
+    if (files.length === 0) return;
 
     try {
-      if (imageSrc && imageSrc.startsWith("blob:")) {
-        URL.revokeObjectURL(imageSrc);
-      }
-      if (croppedImage && croppedImage.startsWith("blob:")) {
-        URL.revokeObjectURL(croppedImage);
+      const newImages: ImageItem[] = [];
+
+      for (const file of files) {
+        // 이미지 메타데이터 추출
+        const metadata = await extractImageMetadata(file);
+
+        // 이미지 리사이징 (필요시)
+        const resizedImageUrl = await resizeImage(file);
+
+        const imageItem: ImageItem = {
+          id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          originalFile: file,
+          src: resizedImageUrl,
+          name: file.name,
+          size: file.size,
+          aspectRatio: metadata.aspectRatio,
+          isValidAspect: isValidAspectRatio(metadata.aspectRatio),
+          needsCrop: !isValidAspectRatio(metadata.aspectRatio),
+        };
+
+        newImages.push(imageItem);
       }
 
-      const resizedImageUrl = await resizeImage(file);
-      setImageSrc(resizedImageUrl);
-      setCroppedImage(null);
-      setCroppedAreaPixels(null);
+      setImages((prev) => [...prev, ...newImages]);
+      toast.success(`${files.length}개의 이미지가 업로드되었습니다.`);
 
-      setTimeout(() => {
-        setIsCropperOpen(true);
-      }, 50);
+      // 부적합한 비율의 이미지 개수 알림
+      const invalidCount = newImages.filter((img) => !img.isValidAspect).length;
+      if (invalidCount > 0) {
+        toast.warning(`${invalidCount}개의 이미지가 크롭이 필요합니다.`);
+      }
     } catch (error) {
       console.error("이미지 처리 중 오류:", error);
-      alert("이미지 처리 중 오류가 발생했습니다.");
+      toast.error("이미지 처리 중 오류가 발생했습니다.");
     }
+
+    // 파일 입력 초기화
+    event.target.value = "";
   };
 
-  const handleCropComplete = useCallback((croppedImageUrl: string) => {
-    setCroppedImage(croppedImageUrl);
+  // 개별 이미지 크롭 시작
+  const handleCropImage = useCallback((image: ImageItem) => {
+    setCurrentCropImage(image);
+    setIsCropperOpen(true);
   }, []);
 
-  const handleClearResult = useCallback(() => {
-    if (croppedImage && croppedImage.startsWith("blob:")) {
-      URL.revokeObjectURL(croppedImage);
-    }
-    (imageRef?.current as HTMLInputElement).value = "";
-    setCroppedImage(null);
-  }, [croppedImage]);
+  // 크롭 완료 처리
+  const handleCropComplete = useCallback(
+    (imageId: string, croppedImageUrl: string, finalAspectRatio: number) => {
+      setImages((prev) =>
+        prev.map((img) =>
+          img.id === imageId
+            ? {
+                ...img,
+                croppedSrc: croppedImageUrl,
+                aspectRatio: finalAspectRatio,
+                isValidAspect: true,
+                needsCrop: false,
+              }
+            : img
+        )
+      );
+    },
+    []
+  );
+
+  // 이미지 삭제
+  const handleDeleteImage = useCallback((imageId: string) => {
+    setImages((prev) => {
+      const imageToDelete = prev.find((img) => img.id === imageId);
+      if (imageToDelete) {
+        // blob URL 정리
+        if (imageToDelete.src.startsWith("blob:")) {
+          URL.revokeObjectURL(imageToDelete.src);
+        }
+        if (
+          imageToDelete.croppedSrc &&
+          imageToDelete.croppedSrc.startsWith("blob:")
+        ) {
+          URL.revokeObjectURL(imageToDelete.croppedSrc);
+        }
+      }
+      return prev.filter((img) => img.id !== imageId);
+    });
+  }, []);
+
+  // 모든 완성된 이미지 다운로드
+  const handleDownloadAll = useCallback(() => {
+    const completedImages = images.filter((img) => img.croppedSrc);
+
+    completedImages.forEach((image, index) => {
+      const link = document.createElement("a");
+      link.href = image.croppedSrc!;
+      link.download = `cropped-${image.name}`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    });
+
+    toast.success(`${completedImages.length}개의 이미지를 다운로드했습니다.`);
+  }, [images]);
+
+  // 컴포넌트 언마운트 시 blob URL 정리
+  useEffect(() => {
+    return () => {
+      images.forEach((image) => {
+        if (image.src.startsWith("blob:")) {
+          URL.revokeObjectURL(image.src);
+        }
+        if (image.croppedSrc && image.croppedSrc.startsWith("blob:")) {
+          URL.revokeObjectURL(image.croppedSrc);
+        }
+      });
+    };
+  }, []);
 
   return (
-    <div className="max-w-4xl mx-auto p-6  min-h-screen">
-      <div className="mb-4">
-        <label className="block text-sm font-medium text-gray-700 mb-2">
-          이미지 업로드
-        </label>
-        <input
-          ref={imageRef}
-          type="file"
-          accept="image/*"
-          onChange={handleFileUpload}
-          className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
-        />
+    <div className="max-w-7xl mx-auto p-6 bg-white min-h-screen">
+      {/* Header */}
+      <div className="mb-8">
+        <h1 className="text-3xl font-bold text-gray-900 mb-2">
+          다중 이미지 크롭 도구
+        </h1>
+        <p className="text-gray-600">
+          여러 이미지를 업로드하고 권장 비율(1:1, 4:5, 1.91:1)에 맞게
+          크롭하세요.
+        </p>
       </div>
 
+      {/* File Upload */}
+      <div className="mb-6">
+        <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:border-blue-400 transition-colors">
+          <div className="space-y-4">
+            <div className="text-4xl text-gray-400">📁</div>
+            <div>
+              <label className="cursor-pointer">
+                <span className="text-lg font-medium text-blue-600 hover:text-blue-700">
+                  이미지 파일 선택
+                </span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  onChange={handleFilesUpload}
+                  className="hidden"
+                />
+              </label>
+              <p className="text-sm text-gray-500 mt-2">
+                여러 이미지를 동시에 선택할 수 있습니다. (JPG, PNG, GIF 등)
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Summary */}
+      <ImageSummary images={images} onDownloadAll={handleDownloadAll} />
+
+      {/* Images Grid */}
+      {images.length > 0 && (
+        <div className="mb-8">
+          <h2 className="text-xl font-semibold text-gray-800 mb-4">
+            업로드된 이미지 ({images.length}개)
+          </h2>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+            {images.map((image) => (
+              <ImageThumbnail
+                key={image.id}
+                image={image}
+                onCrop={handleCropImage}
+                onDelete={handleDeleteImage}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Empty State */}
+      {images.length === 0 && (
+        <div className="text-center py-12">
+          <div className="text-6xl text-gray-300 mb-4">🖼️</div>
+          <h3 className="text-xl font-medium text-gray-600 mb-2">
+            아직 업로드된 이미지가 없습니다
+          </h3>
+          <p className="text-gray-500">
+            위의 파일 선택 버튼을 클릭하여 이미지를 업로드해보세요.
+          </p>
+        </div>
+      )}
+
+      {/* Crop Dialog */}
       <CropDialog
         isOpen={isCropperOpen}
         onOpenChange={setIsCropperOpen}
-        imageSrc={imageSrc}
+        image={currentCropImage}
         onCropComplete={handleCropComplete}
       />
 
-      {croppedImage && (
-        <CroppedResult
-          croppedImage={croppedImage}
-          croppedAreaPixels={croppedAreaPixels}
-          aspect={aspect}
-          rotation={rotation}
-          onClear={handleClearResult}
-          openCropper={() => setIsCropperOpen(true)}
-        />
+      {/* Instructions */}
+      {images.length > 0 && (
+        <div className="mt-8 bg-blue-50 border border-blue-200 rounded-lg p-4">
+          <h4 className="font-semibold text-blue-800 mb-2">💡 사용 방법</h4>
+          <ul className="text-sm text-blue-700 space-y-1">
+            <li>• ⚠️ 경고 표시가 있는 이미지는 크롭이 필요합니다</li>
+            <li>{`• "크롭하기" 버튼을 클릭하여 권장 비율에 맞게 조정하세요`}</li>
+            <li>• ✓ 완료 표시가 있는 이미지는 크롭이 완료된 상태입니다</li>
+            <li>• 모든 이미지 크롭이 완료되면 일괄 다운로드할 수 있습니다</li>
+          </ul>
+        </div>
       )}
     </div>
   );

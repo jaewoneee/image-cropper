@@ -2,21 +2,28 @@
 import React, { useState, useCallback, ChangeEvent, useEffect } from "react";
 import Cropper from "react-easy-crop";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import {
+  createCroppedImage,
+  createSimpleCroppedImage,
+  getClosestAspectRatio,
+} from "@/lib/utils";
+import { toast } from "sonner";
 
-const MAX_PIXEL = 4000;
-
-// 1. Dialog Crop Component
 interface CropDialogProps {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
-  imageSrc: string;
-  onCropComplete: (croppedImageUrl: string) => void;
+  image: ImageItem | null;
+  onCropComplete: (
+    imageId: string,
+    croppedImageUrl: string,
+    finalAspectRatio: number
+  ) => void;
 }
 
 const CropDialog: React.FC<CropDialogProps> = ({
   isOpen,
   onOpenChange,
-  imageSrc,
+  image,
   onCropComplete,
 }) => {
   const [crop, setCrop] = useState<Point>({ x: 0, y: 0 });
@@ -34,14 +41,18 @@ const CropDialog: React.FC<CropDialogProps> = ({
     { label: "1.91:1 (Landscape)", value: 1.91 },
   ];
 
-  // Dialog가 완전히 열린 후 Cropper 렌더링
+  // Dialog가 열릴 때 권장 비율로 초기화
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && image) {
       setIsDialogReady(false);
       setCrop({ x: 0, y: 0 });
       setZoom(1);
       setRotation(0);
       setCroppedAreaPixels(null);
+
+      // 현재 이미지 비율에 가장 가까운 권장 비율로 설정
+      const recommendedAspect = getClosestAspectRatio(image.aspectRatio);
+      setAspect(recommendedAspect);
 
       const timer = setTimeout(() => {
         setIsDialogReady(true);
@@ -52,7 +63,7 @@ const CropDialog: React.FC<CropDialogProps> = ({
     } else {
       setIsDialogReady(false);
     }
-  }, [isOpen]);
+  }, [isOpen, image]);
 
   const onCropCompleteHandler = useCallback(
     (croppedArea: CropArea, croppedAreaPixels: CroppedAreaPixels) => {
@@ -61,144 +72,8 @@ const CropDialog: React.FC<CropDialogProps> = ({
     []
   );
 
-  // 간단한 크롭 함수
-  const createSimpleCroppedImage = useCallback(
-    (imageSrc: string, pixelCrop: CroppedAreaPixels): Promise<string> => {
-      return new Promise((resolve, reject) => {
-        const image = new Image();
-        image.crossOrigin = "anonymous";
-
-        image.onload = () => {
-          const canvas = document.createElement("canvas");
-          const ctx = canvas.getContext("2d");
-
-          if (!ctx) {
-            reject(new Error("Canvas context not supported"));
-            return;
-          }
-
-          canvas.width = pixelCrop.width;
-          canvas.height = pixelCrop.height;
-
-          ctx.drawImage(
-            image,
-            pixelCrop.x,
-            pixelCrop.y,
-            pixelCrop.width,
-            pixelCrop.height,
-            0,
-            0,
-            pixelCrop.width,
-            pixelCrop.height
-          );
-
-          canvas.toBlob(
-            (blob) => {
-              if (blob) {
-                const url = URL.createObjectURL(blob);
-                resolve(url);
-              } else {
-                reject(new Error("Failed to create blob"));
-              }
-            },
-            "image/jpeg",
-            0.95
-          );
-        };
-
-        image.onerror = () => {
-          reject(new Error("Failed to load image"));
-        };
-
-        image.src = imageSrc;
-      });
-    },
-    []
-  );
-
-  // 복잡한 크롭 함수 (회전 포함)
-  const createCroppedImage = useCallback(
-    async (
-      imageSrc: string,
-      pixelCrop: CroppedAreaPixels,
-      rotation = 0
-    ): Promise<string> => {
-      return new Promise((resolve, reject) => {
-        const image = new Image();
-        image.crossOrigin = "anonymous";
-
-        image.onload = () => {
-          const canvas = document.createElement("canvas");
-          const ctx = canvas.getContext("2d");
-
-          if (!ctx) {
-            reject(new Error("Canvas context not supported"));
-            return;
-          }
-
-          const radians = (rotation * Math.PI) / 180;
-          const sin = Math.abs(Math.sin(radians));
-          const cos = Math.abs(Math.cos(radians));
-
-          const rotatedWidth = image.width * cos + image.height * sin;
-          const rotatedHeight = image.width * sin + image.height * cos;
-
-          const tempCanvas = document.createElement("canvas");
-          const tempCtx = tempCanvas.getContext("2d");
-
-          if (!tempCtx) {
-            reject(new Error("Temp canvas context not supported"));
-            return;
-          }
-
-          tempCanvas.width = rotatedWidth;
-          tempCanvas.height = rotatedHeight;
-
-          tempCtx.translate(rotatedWidth / 2, rotatedHeight / 2);
-          tempCtx.rotate(radians);
-          tempCtx.drawImage(image, -image.width / 2, -image.height / 2);
-
-          canvas.width = pixelCrop.width;
-          canvas.height = pixelCrop.height;
-
-          ctx.drawImage(
-            tempCanvas,
-            pixelCrop.x,
-            pixelCrop.y,
-            pixelCrop.width,
-            pixelCrop.height,
-            0,
-            0,
-            pixelCrop.width,
-            pixelCrop.height
-          );
-
-          canvas.toBlob(
-            (blob) => {
-              if (blob) {
-                const url = URL.createObjectURL(blob);
-                resolve(url);
-              } else {
-                reject(new Error("Failed to create blob"));
-              }
-            },
-            "image/jpeg",
-            0.95
-          );
-        };
-
-        image.onerror = () => {
-          reject(new Error("Failed to load image"));
-        };
-
-        image.src = imageSrc;
-      });
-    },
-    []
-  );
-
   const handleCropApply = useCallback(async (): Promise<void> => {
-    if (!croppedAreaPixels || !imageSrc) {
+    if (!croppedAreaPixels || !image) {
       alert("크롭 영역이 설정되지 않았습니다.");
       return;
     }
@@ -206,30 +81,31 @@ const CropDialog: React.FC<CropDialogProps> = ({
     try {
       const croppedImageUrl =
         rotation === 0
-          ? await createSimpleCroppedImage(imageSrc, croppedAreaPixels)
-          : await createCroppedImage(imageSrc, croppedAreaPixels, rotation);
+          ? await createSimpleCroppedImage(image.src, croppedAreaPixels)
+          : await createCroppedImage(image.src, croppedAreaPixels, rotation);
 
-      onCropComplete(croppedImageUrl);
+      onCropComplete(image.id, croppedImageUrl, aspect);
       onOpenChange(false);
+      toast.success("이미지 크롭이 완료되었습니다!");
     } catch (error) {
       console.error("크롭 처리 중 오류:", error);
       try {
         const croppedImageUrl = await createSimpleCroppedImage(
-          imageSrc,
+          image.src,
           croppedAreaPixels
         );
-        onCropComplete(croppedImageUrl);
+        onCropComplete(image.id, croppedImageUrl, aspect);
         onOpenChange(false);
+        toast.success("이미지 크롭이 완료되었습니다!");
       } catch (fallbackError) {
-        alert(`크롭 처리 중 오류가 발생했습니다: ${error}`);
+        toast.error(`크롭 처리 중 오류가 발생했습니다: ${error}`);
       }
     }
   }, [
     croppedAreaPixels,
-    imageSrc,
+    image,
     rotation,
-    createCroppedImage,
-    createSimpleCroppedImage,
+    aspect,
     onCropComplete,
     onOpenChange,
   ]);
@@ -238,7 +114,6 @@ const CropDialog: React.FC<CropDialogProps> = ({
     setCrop({ x: 0, y: 0 });
     setZoom(1);
     setRotation(0);
-    setAspect(1);
     setCroppedAreaPixels(null);
     setCropperKey((prev) => prev + 1);
   };
@@ -250,11 +125,12 @@ const CropDialog: React.FC<CropDialogProps> = ({
     return aspectValue.toFixed(2);
   };
 
+  if (!image) return null;
+
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
       <DialogContent
-        className="max-w-6xl max-h-[90vh] overflow-y-auto
-  [&::-webkit-scrollbar]:w-2
+        className="w-[1000px] max-h-[90vh] overflow-y-scroll [&::-webkit-scrollbar]:w-2
   [&::-webkit-scrollbar-track]:rounded-full
   [&::-webkit-scrollbar-track]:bg-gray-100
   [&::-webkit-scrollbar-thumb]:rounded-full
@@ -262,18 +138,18 @@ const CropDialog: React.FC<CropDialogProps> = ({
   dark:[&::-webkit-scrollbar-track]:bg-neutral-700
   dark:[&::-webkit-scrollbar-thumb]:bg-neutral-500"
       >
-        <DialogTitle>Image Crop Tool</DialogTitle>
+        <DialogTitle className="mt-4">{image.name} - 이미지 크롭</DialogTitle>
         <p className="text-xs text-gray-500 mt-1">
-          {`* ${MAX_PIXEL}px 이상의 이미지는 자동으로 3000px 이하로 리사이징됩니다.`}
+          현재 비율: {image.aspectRatio.toFixed(2)} → 권장 비율로 크롭해주세요
         </p>
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="flex flex-col gap-6">
           {/* Crop Area */}
           <div className="lg:col-span-2">
             <div className="relative w-full h-96 bg-gray-100 rounded-lg overflow-hidden">
-              {imageSrc && isDialogReady && (
+              {image.src && isDialogReady && (
                 <Cropper
                   key={cropperKey}
-                  image={imageSrc}
+                  image={image.src}
                   crop={crop}
                   zoom={zoom}
                   aspect={aspect}
@@ -298,7 +174,7 @@ const CropDialog: React.FC<CropDialogProps> = ({
                   }}
                 />
               )}
-              {imageSrc && !isDialogReady && (
+              {image.src && !isDialogReady && (
                 <div className="flex items-center justify-center w-full h-full">
                   <div className="text-gray-500">이미지 로딩 중...</div>
                 </div>
@@ -308,10 +184,10 @@ const CropDialog: React.FC<CropDialogProps> = ({
 
           {/* Controls */}
           <div className="space-y-6">
-            {/* Aspect Ratio Selection */}
-            <div className="bg-gray-50 p-4 rounded-lg">
-              <h3 className="text-lg font-semibold text-gray-800 mb-3">
-                비율 선택
+            {/* Recommended Aspect Ratio */}
+            <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
+              <h3 className="text-lg font-semibold text-blue-800 mb-3">
+                ✅ 권장 비율
               </h3>
               <div className="space-y-2">
                 {aspectRatios.map((ratio: AspectRatio) => (
@@ -331,7 +207,9 @@ const CropDialog: React.FC<CropDialogProps> = ({
                       }}
                       className="mr-2 text-blue-600"
                     />
-                    <span className="text-sm text-gray-700">{ratio.label}</span>
+                    <span className="text-sm text-blue-700 font-medium">
+                      {ratio.label}
+                    </span>
                   </label>
                 ))}
               </div>
@@ -384,13 +262,13 @@ const CropDialog: React.FC<CropDialogProps> = ({
               <button
                 onClick={handleCropApply}
                 disabled={!croppedAreaPixels}
-                className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition duration-200 font-medium"
+                className="w-full bg-blue-600 text-white py-3 px-4 rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition duration-200 font-medium text-sm"
               >
-                크롭 적용
+                크롭 완료
               </button>
               <button
                 onClick={handleReset}
-                className="w-full bg-gray-300 text-gray-700 py-2 px-4 rounded-md hover:bg-gray-400 transition duration-200 font-medium"
+                className="w-full bg-gray-300 text-gray-700 py-2 px-4 rounded-md hover:bg-gray-400 transition duration-200 font-medium text-sm"
               >
                 초기화
               </button>
@@ -400,7 +278,7 @@ const CropDialog: React.FC<CropDialogProps> = ({
             <div className="bg-blue-50 p-3 rounded-lg text-xs">
               <h4 className="font-semibold text-blue-800 mb-2">현재 설정</h4>
               <div className="space-y-1 text-blue-700">
-                <div>비율: {getAspectLabel(aspect)}</div>
+                <div>타겟 비율: {getAspectLabel(aspect)}</div>
                 <div>줌: {zoom.toFixed(1)}x</div>
                 <div>회전: {rotation}°</div>
                 {croppedAreaPixels && (
@@ -423,5 +301,4 @@ const CropDialog: React.FC<CropDialogProps> = ({
     </Dialog>
   );
 };
-
 export default CropDialog;

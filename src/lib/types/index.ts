@@ -1,4 +1,3 @@
-// Types
 interface AspectRatio {
   label: string;
   value: number;
@@ -21,4 +20,16 @@ interface CroppedAreaPixels {
   height: number;
   x: number;
   y: number;
+}
+
+interface ImageItem {
+  id: string;
+  originalFile: File;
+  src: string;
+  name: string;
+  size: number;
+  aspectRatio: number;
+  isValidAspect: boolean;
+  croppedSrc?: string;
+  needsCrop: boolean;
 }
